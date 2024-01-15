@@ -43,7 +43,7 @@ def apply_n(fn: Callable[[np.ndarray], np.ndarray], x: np.ndarray, n: int) -> np
 
 
 if __name__ == "__main__":
-    X = np.linspace(0.0, 1.0, 100)
+    X = np.linspace(0.0, 1.0, 101)
     N = 4
     Y = apply_n(triangle_from_2_relus, X, N)
     plot(X, Y, f"triangle^{N}")
