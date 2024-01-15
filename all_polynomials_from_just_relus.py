@@ -38,25 +38,26 @@ def apply_n(fn: Callable[[np.ndarray], np.ndarray], n: int) -> Callable[[np.ndar
 
 
 def double_triangle(x: np.ndarray) -> np.ndarray:
+    # obtained through trial and error
+    # creates two peaks
     return triangle_from_2_relus(2 * triangle_from_2_relus(2 * x)) + triangle_from_2_relus(
         2 * triangle_from_2_relus(2 * (x - 0.5)))
 
 
 def square_fractal(fn: Callable[[np.ndarray], np.ndarray]) -> Callable[[np.ndarray], np.ndarray]:
-    # obtained through trial and error
-    # creates repeated triangles
+    # obtained through double_triangle
     return lambda x: fn(2 * fn(2 * x)) + fn(2 * fn(2 * (x - 0.5)))
 
 
 if __name__ == "__main__":
-    X = np.linspace(0.0, 1.0, 202)
-    N = 2
-    plot(X, triangle_from_2_relus(X), f"simple_triangle", color="red")
-    Y = square_fractal(square_fractal(triangle_from_2_relus))(X)  # apply_n(triangle_from_2_relus, X, N)
-    Y = apply_n(square_fractal,N)(triangle_from_2_relus)(X)
-    plot(X, Y, f"double_triangle", color="blue")
+
+    for N in range(1, 4):
+        X = np.linspace(0.0, 1.0, 10000)
+        Y = apply_n(square_fractal, N)(triangle_from_2_relus)(X)
+        plot(X, Y, f"order {N}", color="blue")
+
     plt.legend(loc='best')
-    plt.title("repeated triangle_from_2_relus")
+    plt.title("repeated relus")
     plt.show()
 
 # plot both of those on the same graph with different colors
