@@ -6,6 +6,8 @@ import numpy as np
 
 matplotlib.use('MacOSX')  # Replace 'TkAgg' with your preferred backend
 
+# The goal is to express all polynomials with a neural network that only uses relu activation functions
+# many thanks to Nikolaj-K @ https://www.youtube.com/watch?v=PApGm1TKFHQ for the topic
 
 def relu(x: np.ndarray) -> np.ndarray:
     return np.maximum(x, 0)
