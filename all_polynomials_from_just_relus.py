@@ -48,15 +48,24 @@ def double_triangle(x: np.ndarray) -> np.ndarray:
 
 def square_fractal(fn: Callable[[np.ndarray], np.ndarray]) -> Callable[[np.ndarray], np.ndarray]:
     # obtained through double_triangle
-    return lambda x: fn(2 * fn(2 * x)) + fn(2 * fn(2 * (x - 0.5)))
+    return lambda x: fn(2*fn(x))
 
+
+def express_square_fractal_in_terms_of_fnx(fn: Callable[[np.ndarray], np.ndarray]) -> Callable[[np.ndarray], np.ndarray]:
+    # obtained through double_triangle
+    return lambda x: fn(fn(x)) + fn(fn(x - 0.5))
+
+
+def real_square(fn: Callable[[np.ndarray], np.ndarray]) -> Callable[[np.ndarray], np.ndarray]:
+    return lambda x: fn(fn(x)) + fn(fn(x - 0.5))
 
 if __name__ == "__main__":
+    color_cycle = plt.cm.get_cmap('tab10')
 
     for N in range(1, 4):
         X = np.linspace(0.0, 1.0, 10000)
         Y = apply_n(square_fractal, N)(triangle_from_2_relus)(X)
-        plot(X, Y, f"order {N}", color="blue")
+        plot(X, Y, f"order {N}", color=color_cycle(N))
 
     plt.legend(loc='best')
     plt.title("repeated relus")
