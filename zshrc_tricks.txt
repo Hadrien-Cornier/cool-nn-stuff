@@ -1,0 +1,10 @@
+alias llm='ollama run codellama'
+function use_last_output_for_llm() {
+    local temp_file=$(mktemp)
+    # Execute the last command and redirect its output to a temporary file
+    eval $(fc -ln -1) > "$temp_file"
+    # Read the output from the temporary file and pass it to ollama run codellama
+    ollama run codellama "solve the following error: $(cat $temp_file)"
+    # Clean up by removing the temporary file
+    rm "$temp_file"
+}
