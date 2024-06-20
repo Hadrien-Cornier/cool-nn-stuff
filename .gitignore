@@ -5,3 +5,4 @@
 .idea/vcs.xml
 .idea/inspectionProfiles/Project_Default.xml
 .vscode/settings.json
+7-reproduce-gpt2/data/shakespeare.txt
