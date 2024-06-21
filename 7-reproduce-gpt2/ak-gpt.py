@@ -19,6 +19,14 @@ vocab_size = len(chars)
 print("vocab :\n" , ''.join(chars))
 print("vocab size :", vocab_size)
 
+# TOKENIZER 
+
+# create a mapping from characters to integers
+# most basic tokenizer
+stoi = { ch:i for i,ch in enumerate(chars) }
+itos = { i:ch for i,ch in enumerate(chars) }
+encode = lambda s: [stoi[c] for c in s] # encoder: take a string, output a list of integers
+decode = lambda l: ''.join([itos[i] for i in l]) # decoder: take a list of integers, output a string
 
 # hyperparams 
 @dataclass
@@ -29,6 +37,7 @@ class Config:
     n_embd = 16
     n_layer = 1
     n_head = 4 # number of heads
+    device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
     @property 
     def head_size(self): return self.n_embd // self.n_head ;
@@ -37,27 +46,9 @@ class Config:
 
 config = Config()
 
-# print pwd
-# here are all the unique characters that occur in this text
-chars = sorted(list(set(text)))
-vocab_size = len(chars)
-print("vocab :\n" , ''.join(chars))
-print("vocab size :", vocab_size)
 
-# TOKENIZER 
 
-# create a mapping from characters to integers
-# most basic tokenizer
-stoi = { ch:i for i,ch in enumerate(chars) }
-itos = { i:ch for i,ch in enumerate(chars) }
-encode = lambda s: [stoi[c] for c in s] # encoder: take a string, output a list of integers
-decode = lambda l: ''.join([itos[i] for i in l]) # decoder: take a list of integers, output a string
-
-print(encode("hii there"))
-print(decode(encode("hii there")))
-# hyperparams 
 # no learning can happen if we do this
-
 # Dataloader : 
 data = encode(text)
 n = int(len(data)*0.9) # train set is 90% of the data
@@ -154,7 +145,7 @@ class BigramLanguageModel(nn.Module):
         self.lm_head = nn.Linear(config.n_embd, config.vocab_size)
         self.sa_heads = MultiHeadAttention(4, config.n_embd//4)
 
-        self.blocks = nn.ModuleList([Block(config) for _ in range(config.n_layer)])
+        self.blocks = nn.Sequential(*[Block(config) for _ in range(config.n_layer)])
 
     def forward(self, idx, targets=None):
         # we just need to populate self.token_embedding_table with 
@@ -163,15 +154,14 @@ class BigramLanguageModel(nn.Module):
         # C = classes = vocabulary size in our bigram case
         # B = training batch size
         # T = context length
-        B = idx.shape[0]
-        T = idx.shape[1]
+        B, T = idx.shape
         # print("idx shape", idx.shape)
-        tok_emb = self.token_embedding_table(idx) # (B,T)
+        tok_emb = self.token_embedding_table(idx) # (B,T,C)
         # print("tok_emb shape", tok_emb.shape)
-        pos_emb = self.position_embedding_table(torch.arange(T, device=idx.device)) # (T,C)
+        pos_emb = self.position_embedding_table(torch.arange(T, device=idx.device)) # (B,T,C)
         x = tok_emb + pos_emb
-    
-        x = self.sa_heads(x) # collect context
+        x = self.sa_heads(x) #(B, T, C)
+        # x = self.blocks(x) # collect context
         x = self.ffwd(x) # think based on context
         logits = self.lm_head(x) # decodes words from the latent representation by sampling
  
@@ -211,9 +201,9 @@ class Head(nn.Module):
         # What is this about ? 
 
         # this is version 1 of the head
-        self.key = nn.Linear(head_size,head_size)
-        self.query = nn.Linear(head_size,head_size)
-        self.value = nn.Linear(head_size,head_size)
+        self.key = nn.Linear(config.n_embd,head_size)
+        self.query = nn.Linear(config.n_embd,head_size)
+        self.value = nn.Linear(config.n_embd,head_size)
 
         # this is version 2 of the head, we stack the key,value,pair
         # self.c_attn = nn.Linear(config.n_embd, 3 * config.n_embd)
@@ -247,10 +237,14 @@ class MultiHeadAttention(nn.Module):
     def forward(self, x):
         """ multi-headed is just single head in parallel 
         in different channels for the same input sequence"""
+        # print("x shape", x.shape)
+        # print("sum : ", summary(self.heads[0] ))
+        # print("self.heads", self.heads) 
+        # print("x shape after cat", self.heads[0](x).shape)
         return torch.cat([h(x) for h in self.heads], dim=-1)
 
 
-class FeedForward(nn.Module): 
+class FeedForward(nn.Module):  
     def __init__(self, n_embd):
         super().__init__()
         # now they think on the data individually
@@ -301,7 +295,7 @@ def estimate_loss():
 # print(decode(m.generate(idx = torch.zeros((1, 1), dtype=torch.long), max_new_tokens=100)[0].tolist()))
 print(f"Training on {len(train_data)} examples")
 #
-for steps in range(1000): # increase number of steps for good results...
+for steps in range(100): # increase number of steps for good results...
     
     # sample a batch of data
     xb, yb = get_batch('train')
@@ -317,4 +311,34 @@ for steps in range(1000): # increase number of steps for good results...
     loss.backward()
     optimizer.step()
 
+# generate from the model
+context = torch.zeros((1, 1), dtype=torch.long, device=config.device)
+print(decode(model.generate(context, max_new_tokens=2000)[0].tolist()))
 print(loss.item())
+
+#  File "/Users/hcornier/Documents/GitHub/cool-nn-stuff/7-reproduce-gpt2/ak-gpt.py", line 182, in generate
+    # logits, loss = self(idx)
+#                    ^^^^^^^^^
+#   File "/opt/anaconda3/envs/py312/lib/python3.12/site-packages/torch/nn/modules/module.py", line 1532, in _wrapped_call_impl
+#     return self._call_impl(*args, **kwargs)
+#            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+#   File "/opt/anaconda3/envs/py312/lib/python3.12/site-packages/torch/nn/modules/module.py", line 1541, in _call_impl
+#     return forward_call(*args, **kwargs)
+#            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+#   File "/Users/hcornier/Documents/GitHub/cool-nn-stuff/7-reproduce-gpt2/ak-gpt.py", line 161, in forward
+#     pos_emb = self.position_embedding_table(torch.arange(T, device=idx.device)) # (B,T,C)
+#               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+#   File "/opt/anaconda3/envs/py312/lib/python3.12/site-packages/torch/nn/modules/module.py", line 1532, in _wrapped_call_impl
+#     return self._call_impl(*args, **kwargs)
+#            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+#   File "/opt/anaconda3/envs/py312/lib/python3.12/site-packages/torch/nn/modules/module.py", line 1541, in _call_impl
+#     return forward_call(*args, **kwargs)
+#            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+#   File "/opt/anaconda3/envs/py312/lib/python3.12/site-packages/torch/nn/modules/sparse.py", line 163, in forward
+#     return F.embedding(
+#            ^^^^^^^^^^^^
+#   File "/opt/anaconda3/envs/py312/lib/python3.12/site-packages/torch/nn/functional.py", line 2264, in embedding
+#     return torch.embedding(weight, input, padding_idx, scale_grad_by_freq, sparse)
+#            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+# IndexError: index out of range in self
+# print:12: no matches found: print(x shape after cat, self.heads[0](x).shape)    
