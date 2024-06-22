@@ -1,57 +1,50 @@
 import torch
 from torchinfo import summary
-import torch.nn as nn
 from torch.nn import functional as F
 from dataclasses import dataclass
+import os
+
+import torch.nn as nn
 torch.manual_seed(1337)
 
-# print pwd
-import os
 print(os.getcwd())
 input_path = os.path.abspath(os.getcwd()+"/7-reproduce-gpt2/data/shakespeare.txt")
-# read it in to inspect it
+
 with open(input_path, 'r', encoding='utf-8') as f:
     text = f.read()
 
-# here are all the unique characters that occur in this text
 chars = sorted(list(set(text)))
 vocab_size = len(chars)
 print("vocab :\n" , ''.join(chars))
 print("vocab size :", vocab_size)
 
-# TOKENIZER 
-
-# create a mapping from characters to integers
-# most basic tokenizer
 stoi = { ch:i for i,ch in enumerate(chars) }
 itos = { i:ch for i,ch in enumerate(chars) }
-encode = lambda s: [stoi[c] for c in s] # encoder: take a string, output a list of integers
-decode = lambda l: ''.join([itos[i] for i in l]) # decoder: take a list of integers, output a string
+encode = lambda s: [stoi[c] for c in s]
+decode = lambda l: ''.join([itos[i] for i in l])
 
-# hyperparams 
 @dataclass
 class Config:
     batch_size = 32
-    block_size = 8
+    block_size = 16
     vocab_size = vocab_size
-    n_embd = 16
-    n_layer = 1
-    n_head = 4 # number of heads
+    learning_rate = 1e-2
+    max_iters = 500
+    eval_iters = 20
+    n_embd = 32
+    n_layer = 8
+    n_head = 4
+    dropout = 0.5
+    T = 0.1
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
     @property 
     def head_size(self): return self.n_embd // self.n_head ;
-    # we split our hidden representation into multiple independednt channels 
-    #that each carry their own stream of information
 
 config = Config()
 
-
-
-# no learning can happen if we do this
-# Dataloader : 
 data = encode(text)
-n = int(len(data)*0.9) # train set is 90% of the data
+n = int(len(data)*0.9)
 train_data = torch.tensor(data[:n], dtype=torch.long)
 val_data = torch.tensor(data[n:], dtype=torch.long)
 
@@ -59,112 +52,33 @@ print("first training row of the training data:")
 print(train_data[:config.block_size])
 
 def get_batch(split):
-    # generate a small batch of data of inputs x and targets y
     block_size = config.block_size
     batch_size = config.batch_size
     data = train_data if split == 'train' else val_data
     ix = torch.randint(len(data) - block_size, (batch_size,))
     x = torch.stack([data[i:i+block_size] for i in ix])
     y = torch.stack([data[i+1:i+block_size+1] for i in ix])
-
-    # batch
-    # y_i = x_i + 1 
-    # batch : B elements : | features : [x_1,...,x_block_size] | target : [y_1,...,y_block_size]
     return x, y
 
-# xb, yb = get_batch('train')
-# print('inputs:')
-# print(xb.shape)
-# print(xb)
-# print('targets:')
-# print(yb.shape)
-# print(yb)
+class GPTLanguageModel(nn.Module):
 
-# print('----')
-
-# for b in range(config.batch_size): # batch dimension
-#     for t in range(config.block_size): # time dimension
-#         context = xb[b, :t+1]
-#         target = yb[b,t]
-#         print(f"when input is {context.tolist()} the target: {target}")
-# the bigram language model just predicts the 
-# next word with a lookup table of frequencies
-# but we can also sample from the implied softmax distribution
-class SimpleBigramLanguageModel(nn.Module):
-
-    def __init__(self, vocab_size):
-        super().__init__()
-        # each token directly reads off the logits for the next token from a lookup table
-        self.token_embedding_table = nn.Embedding(vocab_size, vocab_size)
-
-    def forward(self, idx, targets=None):
-
-# we just need to populate self.token_embedding_table with the occurence counts and we have the distribution lookup for every token to the next
-        # idx and targets are both (B,T) tensor of integers
-        # C = classes = vocabulary size in our bigram case
-        # B = training batch size
-        # T = context length
-        logits = self.token_embedding_table(idx) # (B,T,C)
-
-        if targets is None:
-            loss = None
-        else:
-            B, T, C = logits.shape
-            logits = logits.view(B*T, C)
-            targets = targets.view(B*T)
-            loss = F.cross_entropy(logits, targets)
-
-        return logits, loss
-
-    def generate(self, idx, max_new_tokens):
-        # idx is (B, T) array of indices in the current context
-        for _ in range(max_new_tokens):
-            # get the predictions
-            logits, loss = self(idx)
-            # focus only on the last time step
-            logits = logits[:, -1, :] # becomes (B, C)
-            # this is exactly what the end of the gpt2 model will be later
-            # just use the distribution probability of the next token and sample from it
-            # apply softmax to get probabilities
-            probs = F.softmax(logits, dim=-1) # (B, C)
-            # sample from the distribution
-            idx_next = torch.multinomial(probs, num_samples=1) # (B, 1)
-            # append sampled index to the running sequence
-            idx = torch.cat((idx, idx_next), dim=1) # (B, T+1)
-        return idx
-
-class BigramLanguageModel(nn.Module):
-    #we are improving this bit by bit by adding attenstion layer inside it 
-    
     def __init__(self):
         super().__init__()
-        # each token directly reads off the logits for the next token from a lookup table
         self.token_embedding_table = nn.Embedding(config.vocab_size, config.n_embd)
         self.position_embedding_table = nn.Embedding(config.block_size, config.n_embd)
         self.ffwd = FeedForward(config.n_embd)
         self.lm_head = nn.Linear(config.n_embd, config.vocab_size)
         self.sa_heads = MultiHeadAttention(4, config.n_embd//4)
-
-        self.blocks = nn.Sequential(*[Block(config) for _ in range(config.n_layer)])
+        self.blocks = nn.Sequential(*[Block(config) for _ in range(config.n_layer)], LayerNorm(config.n_embd))
 
     def forward(self, idx, targets=None):
-        # we just need to populate self.token_embedding_table with 
-        # the occurence counts and we have the distribution lookup for every token to the next
-        # idx and targets are both (B,T) tensor of integers
-        # C = classes = vocabulary size in our bigram case
-        # B = training batch size
-        # T = context length
         B, T = idx.shape
-        # print("idx shape", idx.shape)
-        tok_emb = self.token_embedding_table(idx) # (B,T,C)
-        # print("tok_emb shape", tok_emb.shape)
-        pos_emb = self.position_embedding_table(torch.arange(T, device=idx.device)) # (B,T,C)
+        tok_emb = self.token_embedding_table(idx)
+        pos_emb = self.position_embedding_table(torch.arange(T, device=idx.device))
         x = tok_emb + pos_emb
-        x = self.sa_heads(x) #(B, T, C)
-        # x = self.blocks(x) # collect context
-        x = self.ffwd(x) # think based on context
-        logits = self.lm_head(x) # decodes words from the latent representation by sampling
- 
+        x = self.blocks(x)
+        logits = self.lm_head(x)
+
         if targets is None:
             loss = None
         else:
@@ -176,111 +90,108 @@ class BigramLanguageModel(nn.Module):
         return logits, loss
 
     def generate(self, idx, max_new_tokens):
-        # idx is (B, T) array of indices in the current context
         for _ in range(max_new_tokens):
-            # get the predictions
-            logits, loss = self(idx)
-            # focus only on the last time step
-            logits = logits[:, -1, :] # becomes (B, C)
-            # this is exactly what the end of the gpt2 model will be later
-            # just use the distribution probability of the next token and sample from it
-            # apply softmax to get probabilities
-            probs = F.softmax(logits, dim=-1) # (B, C)
-            # sample from the distribution
-            idx_next = torch.multinomial(probs, num_samples=1) # (B, 1)
-            # append sampled index to the running sequence
-            idx = torch.cat((idx, idx_next), dim=1) # (B, T+1)
+            logits, loss = self(idx[:, -config.block_size:])
+            logits = logits[:, -1, :]
+            probs = F.softmax(logits/config.T, dim=-1)
+            idx_next = torch.multinomial(probs, num_samples=1)
+            idx = torch.cat((idx, idx_next), dim=1)
         return idx
 
 class Head(nn.Module):
-    """One head of self-attention"""
     def __init__(self, head_size=12):
         super().__init__()
-        # n_embed = C
         self.scale = 1 / (head_size ** 0.5)
-        # What is this about ? 
-
-        # this is version 1 of the head
         self.key = nn.Linear(config.n_embd,head_size)
         self.query = nn.Linear(config.n_embd,head_size)
         self.value = nn.Linear(config.n_embd,head_size)
 
-        # this is version 2 of the head, we stack the key,value,pair
-        # self.c_attn = nn.Linear(config.n_embd, 3 * config.n_embd)
-        # self.c_proj = nn.Linear(config.n_embd, config.n_embd)
-        # self.c_proj = nn.Linear(config.n_embd, config.n_embd)
-
     def forward(self, x, mask=None):
-        # kqv = self.c_attn(x).view(B, T, 3, config.n_embd)
-        k=self.key(x) # (B, T, C) -> k.transpose(-2, -1) = (B, C, T)
-        q=self.query(x) # (B, T, C)
-        v=self.value(x) # (B, T, C)
+        k=self.key(x)
+        q=self.query(x)
+        v=self.value(x)
 
-        # # (B, T, C)
         wei = q @ k.transpose(-2, -1) * self.scale
 
         if mask is not None:
             wei = wei.masked_fill(mask == 0, float('-inf'))
 
-        wei = F.softmax(wei, dim=-1) # (B, T, T)
+        wei = F.softmax(wei, dim=-1)
 
         out = wei @ v
         return out
-
 
 class MultiHeadAttention(nn.Module):
 
     def __init__(self, head_size=12, num_heads=12) :
         super().__init__()
         self.heads = nn.ModuleList([Head(head_size) for _ in range(num_heads)])
+        self.proj = nn.Linear(config.n_embd, config.n_embd)
+        self.dp = Dropout(config.dropout)
 
     def forward(self, x):
-        """ multi-headed is just single head in parallel 
-        in different channels for the same input sequence"""
-        # print("x shape", x.shape)
-        # print("sum : ", summary(self.heads[0] ))
-        # print("self.heads", self.heads) 
-        # print("x shape after cat", self.heads[0](x).shape)
-        return torch.cat([h(x) for h in self.heads], dim=-1)
+        return self.dp(self.proj(torch.cat([h(x) for h in self.heads], dim=-1)))
 
+class LayerNorm(nn.Module):
+    def __init__(self, n_embd, eps=1e-5):
+        super().__init__()
+        self.eps = eps
+        self.g = nn.Parameter(torch.ones(n_embd))
+        self.b = nn.Parameter(torch.zeros(n_embd))
+
+    def forward(self, x):
+        mean = x.mean(-1, keepdim=True)
+        std = x.std(-1, keepdim=True)
+        return self.g * (x - mean) / (std + self.eps) + self.b
+
+class Dropout(nn.Module):
+    def __init__(self, p=0.1):
+        super().__init__()
+        self.p = p
+
+    def forward(self, x):
+        if self.training:
+            mask = torch.empty_like(x).bernoulli_(1 - self.p)
+            return x * mask / (1 - self.p)
+        return x
 
 class FeedForward(nn.Module):  
     def __init__(self, n_embd):
         super().__init__()
-        # now they think on the data individually
         self.mlp = nn.Sequential(
             nn.Linear(n_embd, 4*n_embd),
             nn.GELU(),
             nn.Linear(4*n_embd, n_embd),
+            nn.Dropout(config.dropout),
         )
     def forward(self, x):
         return self.mlp(x)
-
 
 class Block(nn.Module):
     def __init__(self, config):
         super().__init__()
         self.attn = MultiHeadAttention(config.head_size, config.n_head)
         self.ffwd = FeedForward(config.n_embd)
+        self.ln1 = LayerNorm(config.n_embd)
+        self.ln2 = LayerNorm(config.n_embd)
 
     def forward(self, x):
-        x = self.attn(x) # collect context
-        x = self.ffwd(x) # think based on context
+        x = x + self.attn(self.ln1(x))
+        x = x + self.ffwd(self.ln2(x))
         return x
 
-model = BigramLanguageModel()
-eval_iters = 100
+model = GPTLanguageModel()
+model.to(config.device)
 print(summary(model))
-optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3)
-
+optimizer = torch.optim.AdamW(model.parameters(), lr=config.learning_rate)
 
 @torch.no_grad()
 def estimate_loss():
     out = {}
     model.eval()
     for split in ['train', 'val']:
-        losses = torch.zeros(eval_iters)
-        for k in range(eval_iters):
+        losses = torch.zeros(config.eval_iters)
+        for k in range(config.eval_iters):
             X, Y = get_batch(split)
             logits, loss = model(X, Y)
             losses[k] = loss.item()
@@ -288,22 +199,8 @@ def estimate_loss():
     model.train()
     return out
 
-
-# logits, loss = m(xb, yb)
-# print(logits.shape)
-# print(loss)
-# print(decode(m.generate(idx = torch.zeros((1, 1), dtype=torch.long), max_new_tokens=100)[0].tolist()))
-print(f"Training on {len(train_data)} examples")
-#
-for steps in range(100): # increase number of steps for good results...
-    
-    # sample a batch of data
+for steps in range(config.max_iters):
     xb, yb = get_batch('train')
-    # print("xb shape", xb.shape)
-    # print("yb shape", yb.shape)
-    # print("xb", yb)
-
-    # evaluate the loss
     logits, loss = model(xb, yb)
     if steps%100==0:
       print(" at step ", steps, "trained on ", str((steps+1)*config.batch_size), ", loss is " , estimate_loss() )
@@ -311,34 +208,5 @@ for steps in range(100): # increase number of steps for good results...
     loss.backward()
     optimizer.step()
 
-# generate from the model
 context = torch.zeros((1, 1), dtype=torch.long, device=config.device)
 print(decode(model.generate(context, max_new_tokens=2000)[0].tolist()))
-print(loss.item())
-
-#  File "/Users/hcornier/Documents/GitHub/cool-nn-stuff/7-reproduce-gpt2/ak-gpt.py", line 182, in generate
-    # logits, loss = self(idx)
-#                    ^^^^^^^^^
-#   File "/opt/anaconda3/envs/py312/lib/python3.12/site-packages/torch/nn/modules/module.py", line 1532, in _wrapped_call_impl
-#     return self._call_impl(*args, **kwargs)
-#            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-#   File "/opt/anaconda3/envs/py312/lib/python3.12/site-packages/torch/nn/modules/module.py", line 1541, in _call_impl
-#     return forward_call(*args, **kwargs)
-#            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-#   File "/Users/hcornier/Documents/GitHub/cool-nn-stuff/7-reproduce-gpt2/ak-gpt.py", line 161, in forward
-#     pos_emb = self.position_embedding_table(torch.arange(T, device=idx.device)) # (B,T,C)
-#               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-#   File "/opt/anaconda3/envs/py312/lib/python3.12/site-packages/torch/nn/modules/module.py", line 1532, in _wrapped_call_impl
-#     return self._call_impl(*args, **kwargs)
-#            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-#   File "/opt/anaconda3/envs/py312/lib/python3.12/site-packages/torch/nn/modules/module.py", line 1541, in _call_impl
-#     return forward_call(*args, **kwargs)
-#            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-#   File "/opt/anaconda3/envs/py312/lib/python3.12/site-packages/torch/nn/modules/sparse.py", line 163, in forward
-#     return F.embedding(
-#            ^^^^^^^^^^^^
-#   File "/opt/anaconda3/envs/py312/lib/python3.12/site-packages/torch/nn/functional.py", line 2264, in embedding
-#     return torch.embedding(weight, input, padding_idx, scale_grad_by_freq, sparse)
-#            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-# IndexError: index out of range in self
-# print:12: no matches found: print(x shape after cat, self.heads[0](x).shape)    
