@@ -22,19 +22,35 @@ def freq_map(encoded_training_corpus: List[List[str]]) -> Dict[str, int]:
             freq_map[token] += 1
     return freq_map
 
-def get_a_b_from_ab(code: str) -> Tuple[str, str]:
-    return code.split("+")[0], code.split("+")[1].split(" = ")[0]
+def get_a_b_ab(code: str) -> Tuple[str, str]:
+    return code.split("+")[0], code.split("+")[1].split(" = ")[0], code.split("=")[1].strip()
 
 def bpe_scoring(merge_token: str, freq: int, token_freq: Dict[str, int]) -> float:
     return freq
 
 def wordpiece_scoring(merge_token: str, freq: int, token_freq: Dict[str, int]) -> float:
-    a, b = get_a_b_from_ab(merge_token)
+    a, b, _ = get_a_b_ab(merge_token)
     return freq / (token_freq[a] * token_freq[b])
 
 def tokenization(training_corpus: str, num_steps: int, scoring_function: Callable[[str, int, Dict[str, int]], float]):
     E = encode(training_corpus)
     vocab = set().union(*[set(word) for word in E])
+
+    def apply_merge(merge: str, E: list) -> List[List[str]]:
+            a,b,ab = get_a_b_ab(merge)
+            new_E = []
+            for word in E:
+                new_word = []
+                i = 0
+                while i < len(word):
+                    if i < len(word) - 1 and (word[i] == a) and (word[i + 1] == b):
+                        new_word.append(ab)
+                        i += 2
+                    else:
+                        new_word.append(word[i])
+                        i += 1
+                new_E.append(new_word)
+            return new_E
 
     for step in range(num_steps):
         token_freq = freq_map(E)
@@ -50,6 +66,11 @@ def tokenization(training_corpus: str, num_steps: int, scoring_function: Callabl
         
         top_merge = scores[0]
         print(f"Step {step + 1}: Top merge candidate: {top_merge}")
+
+        new_E = apply_merge(top_merge[0], E)
+        print("we merged", top_merge[0], " in ", E[:10] , "and got", new_E[:10])
+        
+        E = new_E
         
         # Here you would implement the actual merging logic
         # For simplicity, we're just printing the top merge candidate
@@ -60,10 +81,10 @@ def tokenization(training_corpus: str, num_steps: int, scoring_function: Callabl
 
 # Example usage
 training_corpus = "lorem ipsum dolor sit amet consectetur adipiscing elit sed do eiusmod tempor incididunt ut labore et dolore magna aliqua"
-num_steps = 5
+num_steps = 20
 
-print("Byte Pair Encoding:")
+print("Byte Pair Encoding Tokenization:\n\n")
 bpe_vocab = tokenization(training_corpus, num_steps, bpe_scoring)
 
-print("\nWordPiece:")
+print("\n\nWordPiece Tokenization:\n\n")
 wordpiece_vocab = tokenization(training_corpus, num_steps, wordpiece_scoring)
