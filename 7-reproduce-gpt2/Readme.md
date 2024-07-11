@@ -1,3 +1,5 @@
+ak-gpt is from reproducing Andrej Karpathy's gpt video on Youtube
+
 # Setup 
 
 1) Get the data 
