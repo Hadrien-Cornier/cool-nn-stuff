@@ -18,6 +18,8 @@ vocab_size = len(chars)
 print("vocab :\n" , ''.join(chars))
 print("vocab size :", vocab_size)
 
+# simple tokenizer = convert each character to its index in the vocab
+#string to index and index to string
 stoi = { ch:i for i,ch in enumerate(chars) }
 itos = { i:ch for i,ch in enumerate(chars) }
 encode = lambda s: [stoi[c] for c in s]
@@ -77,11 +79,12 @@ class GPTLanguageModel(nn.Module):
         pos_emb = self.position_embedding_table(torch.arange(T, device=idx.device))
         x = tok_emb + pos_emb
         x = self.blocks(x)
-        logits = self.lm_head(x)
+        logits = self.lm_head(x) # unembedding layer that takes hidden state and returns probabilities for each token
 
         if targets is None:
             loss = None
         else:
+            # batch_size x sequence_length x vocab_size
             B, T, C = logits.shape
             logits = logits.view(B*T, C)
             targets = targets.view(B*T)
@@ -99,6 +102,7 @@ class GPTLanguageModel(nn.Module):
         return idx
 
 class Head(nn.Module):
+    #Attention Head
     def __init__(self, head_size=12):
         super().__init__()
         self.scale = 1 / (head_size ** 0.5)
@@ -107,17 +111,28 @@ class Head(nn.Module):
         self.value = nn.Linear(config.n_embd,head_size)
 
     def forward(self, x, mask=None):
+        # batch_size x sequence_length x head_size
         k=self.key(x)
         q=self.query(x)
         v=self.value(x)
 
+        # BSH,BHS -> BSS
+        # batch_size x sequence_length x sequence_length
+        # this is the attention map
+        # we could represent this in einstain notation in jax like this : bth,bht->btt
         wei = q @ k.transpose(-2, -1) * self.scale
 
         if mask is not None:
+            # For causal masking the mask would be a lower triangular matrix of shape (sequence_length, sequence_length)
             wei = wei.masked_fill(mask == 0, float('-inf'))
 
+        # These are the attnetion scores for each token, ie where do I distribute my attention ?
+        # B x S x S
         wei = F.softmax(wei, dim=-1)
 
+        # # BSS,BSH -> BSH 
+        # SO we start with BHS and return to BSH
+        # the attention scores give the weights in the interpolation of the values of other tokens
         out = wei @ v
         return out
 
@@ -132,18 +147,6 @@ class MultiHeadAttention(nn.Module):
     def forward(self, x):
         return self.dp(self.proj(torch.cat([h(x) for h in self.heads], dim=-1)))
 
-class LayerNorm(nn.Module):
-    def __init__(self, n_embd, eps=1e-5):
-        super().__init__()
-        self.eps = eps
-        self.g = nn.Parameter(torch.ones(n_embd))
-        self.b = nn.Parameter(torch.zeros(n_embd))
-
-    def forward(self, x):
-        mean = x.mean(-1, keepdim=True)
-        std = x.std(-1, keepdim=True)
-        return self.g * (x - mean) / (std + self.eps) + self.b
-
 class Dropout(nn.Module):
     def __init__(self, p=0.1):
         super().__init__()
@@ -155,6 +158,18 @@ class Dropout(nn.Module):
             return x * mask / (1 - self.p)
         return x
 
+class LayerNorm(nn.Module):
+    def __init__(self, n_embd, eps=1e-5):
+        super().__init__()
+        self.eps = eps
+        self.g = nn.Parameter(torch.ones(n_embd))
+        self.b = nn.Parameter(torch.zeros(n_embd))
+
+    def forward(self, x):
+        mean = x.mean(-1, keepdim=True)
+        std = x.std(-1, keepdim=True)
+        return self.g * (x - mean) / (std + self.eps) + self.b
+    
 class FeedForward(nn.Module):  
     def __init__(self, n_embd):
         super().__init__()
